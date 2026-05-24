@@ -2,12 +2,13 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<title>Piano Flame VFX — Three.js WebGPU</title>
+		<title>Piano Light-Bar VFX — Three.js WebGPU</title>
 		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
 		<link rel="stylesheet" href="/src/styles.css" />
 	</head>
 	<body>
-		<!-- Live webcam, composited behind the (screen-blended) WebGPU canvas -->
+		<!-- Live webcam — used as the WebGPU scene background (texture source),
+		     so the glass bars can refract it. Sits behind the opaque canvas. -->
 		<video id="webcam" autoplay playsinline muted></video>
 
 		<!-- Calibration overlay: one draggable marker per C key + the key line.
@@ -15,18 +16,17 @@
 		<div id="calibration">
 			<svg id="cal-svg">
 				<polyline id="cal-poly" points="" />
-				<line id="cal-flame-dir" x1="0" y1="0" x2="0" y2="0" />
 			</svg>
 		</div>
 
 		<!-- Three.js-example style info / instructions -->
 		<div id="info">
-			<strong>Three.js WebGPU</strong> — Piano Flame VFX<br />
-			Live flames erupt from each piano key you play, driven by Web MIDI over your webcam.<br />
+			<strong>Three.js WebGPU</strong> — Piano Light-Bar VFX<br />
+			Hold a key and a glassy, glowing bar grows out of it; release to cut it off. Driven by Web MIDI.<br />
 			<span class="hint">
 				Drag each <b>C</b> marker onto the centre of that C key (the white key left of each
 				2-black-key group) — the rest interpolate ·
-				set your MIDI device, camera flips &amp; keyboard size in the panel ·
+				set device, colour &amp; the 3D direction bars grow in the panel ·
 				no piano handy? play <kbd>A</kbd><kbd>W</kbd><kbd>S</kbd><kbd>E</kbd><kbd>D</kbd>…
 			</span>
 			<div id="status"></div>

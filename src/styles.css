@@ -19,27 +19,26 @@ body {
 	touch-action: none;
 }
 
-/* Webcam sits at the very back. The WebGPU canvas is screen-blended on top of it. */
+/* Webcam is only a texture source now (rendered as the WebGPU scene
+   background). Keep it in the DOM & playing, but hidden behind the canvas. */
 #webcam {
 	position: fixed;
 	inset: 0;
 	width: 100%;
 	height: 100%;
 	object-fit: cover;
-	background: #050505;
 	z-index: 0;
-	/* mirror/flip are toggled at runtime via these CSS custom props */
-	transform: scaleX(var(--flip-x, 1)) scaleY(var(--flip-y, 1));
+	/* fully occluded by the opaque canvas above; kept on-page so its frames
+	   keep decoding to feed the VideoTexture (don't display:none it). */
 }
 
-/* renderer canvas — added by JS. Additive flame light "screens" onto the video. */
+/* renderer canvas — added by JS. Full opaque render (webcam bg + glass bars). */
 canvas {
 	position: fixed;
 	inset: 0;
 	width: 100% !important;
 	height: 100% !important;
 	z-index: 1;
-	mix-blend-mode: screen;
 	pointer-events: none;
 }
 

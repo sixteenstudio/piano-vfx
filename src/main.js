@@ -1,28 +1,31 @@
 import * as THREE from 'three/webgpu';
+import { texture, screenUV, uniform } from 'three/tsl';
 import GUI from 'lil-gui';
 
-import { FlameSystem } from './flames.js';
+import { BarSystem } from './bars.js';
 import { Calibration } from './calibration.js';
 import { Webcam } from './webcam.js';
 import { MidiInput, KeyboardInput } from './midi.js';
 
 const statusEl = document.getElementById('status');
 const fatalEl = document.getElementById('fatal');
-
-function setStatus(msg) {
-	statusEl.textContent = msg;
-}
-function fatal(html) {
+const setStatus = (msg) => (statusEl.textContent = msg);
+const fatal = (html) => {
 	fatalEl.hidden = false;
 	fatalEl.innerHTML = html;
-}
+};
 
 // ---------------------------------------------------------------------------
-// Scene / renderer (orthographic, world units == CSS pixels, y-up)
+// Perspective 3D scene. The webcam is the scene background (so glass bars can
+// refract it); bars spawn on the z=0 plane and extend in true 3D toward camera.
 // ---------------------------------------------------------------------------
-let renderer, scene, camera, flames, calibration, webcam, gui;
+const CAM_Z = 6;
+let renderer, scene, camera, bars, calibration, webcam, videoEl, videoTex;
+let coverScale; // uniform(vec2) — cover-fit + mirror/flip of the webcam
+let fCal; // calibration GUI folder (refreshed on device switch)
 
-const emitters = new Map(); // note -> { velocity, until? }
+const raycaster = new THREE.Raycaster();
+const planeZ0 = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const clock = new THREE.Clock();
 
 async function init() {
@@ -30,55 +33,57 @@ async function init() {
 		setStatus('No WebGPU — falling back to WebGL2. (Chrome/Edge give the best results.)');
 	}
 
-	renderer = new THREE.WebGPURenderer({ antialias: true, alpha: false });
+	renderer = new THREE.WebGPURenderer({ antialias: true });
 	renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 	renderer.setSize(window.innerWidth, window.innerHeight);
-	renderer.setClearColor(0x000000, 1);
+	renderer.setClearColor(0x05070a, 1);
 
 	try {
 		await renderer.init();
 	} catch (err) {
-		fatal(
-			`<div><h2>Couldn't start the GPU renderer</h2>
-			<p>${String(err)}</p>
-			<p>This overlay needs WebGPU (best) or WebGL2. Try a recent
-			<a href="https://www.google.com/chrome/">Chrome</a> or Edge.</p></div>`,
-		);
+		fatal(`<div><h2>Couldn't start the GPU renderer</h2><p>${String(err)}</p>
+			<p>This overlay needs WebGPU (best) or WebGL2 — try a recent
+			<a href="https://www.google.com/chrome/">Chrome</a> or Edge.</p></div>`);
 		return;
 	}
-
 	document.body.appendChild(renderer.domElement);
 
 	scene = new THREE.Scene();
-	camera = new THREE.OrthographicCamera(
-		-window.innerWidth / 2,
-		window.innerWidth / 2,
-		window.innerHeight / 2,
-		-window.innerHeight / 2,
-		0.1,
-		1000,
-	);
-	camera.position.z = 10;
+	camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+	camera.position.z = CAM_Z;
+	camera.lookAt(0, 0, 0);
 
-	flames = new FlameSystem();
-	scene.add(flames.mesh);
+	// ---- webcam as a refractable background ----
+	videoEl = document.getElementById('webcam');
+	webcam = new Webcam(videoEl);
+	videoTex = new THREE.VideoTexture(videoEl);
+	videoTex.colorSpace = THREE.SRGBColorSpace;
+	coverScale = uniform(new THREE.Vector2(1, 1));
+	scene.backgroundNode = texture(videoTex, screenUV.sub(0.5).mul(coverScale).add(0.5));
+
+	bars = new BarSystem({ videoTexture: videoTex, coverScale });
+	scene.add(bars.group);
 
 	calibration = new Calibration();
 	calibration.setGuidesVisible(calibration.opts.showGuides);
 
-	// ---- input ----
-	const onNoteOn = (note, velocity) => emitters.set(note, { velocity });
-	const onNoteOff = (note) => {
-		const e = emitters.get(note);
-		if (e && !e.until) emitters.delete(note); // leave timed test bursts alone
+	// ---- input → bars ----
+	const onNoteOn = (note, vel) => {
+		const s = calibration.noteScreen(note);
+		const base = screenToWorld(s.x, s.y);
+		if (base) bars.spawn(note, base, vel);
 	};
+	const onNoteOff = (note) => bars.release(note);
 
-	webcam = new Webcam(document.getElementById('webcam'));
 	const midi = new MidiInput({
 		onNoteOn,
 		onNoteOff,
 		onDevices: (list) => refreshMidiOptions(list),
 		onStatus: setStatus,
+		onSelect: (name) => {
+			calibration.setDevice(name);
+			fCal?.controllersRecursive().forEach((c) => c.updateDisplay());
+		},
 	});
 	new KeyboardInput({ onNoteOn, onNoteOff });
 
@@ -86,18 +91,45 @@ async function init() {
 	try {
 		await webcam.start();
 	} catch (err) {
-		setStatus(`Camera unavailable (${err.name || err}). Flames still work — grant camera access and reload for the overlay.`);
+		setStatus(`Camera unavailable (${err.name || err}). Bars still work — grant camera access and reload for the overlay.`);
 	}
+	updateCover();
+	videoEl.addEventListener('loadedmetadata', updateCover);
 
 	await midi.init();
-
 	buildGUI(midi);
 
 	window.addEventListener('resize', onResize);
 	renderer.setAnimationLoop(animate);
 
 	const backend = renderer.backend?.isWebGPUBackend ? 'WebGPU' : 'WebGL2';
-	if (!statusEl.textContent) setStatus(`Running on ${backend}. Calibrate the handles and play!`);
+	if (!statusEl.textContent) setStatus(`Running on ${backend}. Calibrate the C markers and play!`);
+}
+
+/** client px → world point on the z=0 plane (where bar bases live) */
+function screenToWorld(clientX, clientY) {
+	const ndc = new THREE.Vector2(
+		(clientX / window.innerWidth) * 2 - 1,
+		-((clientY / window.innerHeight) * 2 - 1),
+	);
+	raycaster.setFromCamera(ndc, camera);
+	const out = new THREE.Vector3();
+	return raycaster.ray.intersectPlane(planeZ0, out) ? out : null;
+}
+
+/** recompute the webcam cover-fit + mirror/flip into the shared uniform */
+function updateCover() {
+	const vw = videoEl.videoWidth || 16;
+	const vh = videoEl.videoHeight || 9;
+	const va = vw / vh;
+	const sa = window.innerWidth / window.innerHeight;
+	let sx = 1;
+	let sy = 1;
+	if (sa > va) sy = va / sa; // screen wider → crop top/bottom
+	else sx = sa / va; // screen taller → crop sides
+	if (webcam.flipX) sx = -sx;
+	if (webcam.flipY) sy = -sy;
+	coverScale.value.set(sx, sy);
 }
 
 // ---------------------------------------------------------------------------
@@ -111,16 +143,14 @@ function refreshMidiOptions(list) {
 	if (!midiCtrl) return;
 	const options = { '— none —': '' };
 	for (const d of list) options[d.name] = d.id;
-	if (list.length && !list.some((d) => d.id === midiProxy.device)) {
-		midiProxy.device = list[0].id;
-	}
+	if (list.length && !list.some((d) => d.id === midiProxy.device)) midiProxy.device = list[0].id;
 	midiCtrl = midiCtrl.options(options);
 	midiCtrl.onChange(midiHandler);
 	midiCtrl.updateDisplay();
 }
 
 function buildGUI(midi) {
-	gui = new GUI({ title: '🔥 Piano Flame VFX' });
+	const gui = new GUI({ title: '💎 Piano Light-Bar VFX' });
 
 	// ---- MIDI ----
 	const fMidi = gui.addFolder('MIDI');
@@ -128,47 +158,33 @@ function buildGUI(midi) {
 	midiCtrl = fMidi.add(midiProxy, 'device', { '— none —': '' }).name('Input device');
 	midiCtrl.onChange(midiHandler);
 	fMidi.add({ rescan: () => midi.refresh() }, 'rescan').name('Rescan devices');
+	fMidi.add(midi, 'sustainHolds').name('Sustain holds notes');
 	refreshMidiOptions(midi.listInputs());
 
 	// ---- Webcam ----
 	const fCam = gui.addFolder('Webcam');
-	fCam.add(webcam, 'flipX').name('Mirror (left/right)').onChange(() => webcam.applyTransform());
-	fCam.add(webcam, 'flipY').name('Flip (up/down)').onChange(() => webcam.applyTransform());
+	fCam.add(webcam, 'flipX').name('Mirror (left/right)').onChange(updateCover);
+	fCam.add(webcam, 'flipY').name('Flip (up/down)').onChange(updateCover);
 	const camProxy = { device: '' };
 	let camCtrl = fCam.add(camProxy, 'device', { Default: '' }).name('Camera');
-	camCtrl.onChange((id) => webcam.start(id).catch((e) => setStatus(String(e))));
+	const camSwitch = (id) => webcam.start(id).then(updateCover).catch((e) => setStatus(String(e)));
+	camCtrl.onChange(camSwitch);
 	webcam.listCameras().then((cams) => {
 		if (!cams.length) return;
 		const opts = {};
 		for (const c of cams) opts[c.label] = c.id;
 		camCtrl = camCtrl.options(opts);
-		camCtrl.onChange((id) => webcam.start(id).catch((e) => setStatus(String(e))));
+		camCtrl.onChange(camSwitch);
 	});
 
 	// ---- Calibration ----
-	const fCal = gui.addFolder('Calibration');
-	const applyRange = () =>
-		calibration.setRange(calibration.opts.lowNote, calibration.opts.highNote);
+	fCal = gui.addFolder('Calibration');
+	const applyRange = () => calibration.setRange(calibration.opts.lowNote, calibration.opts.highNote);
 	fCal.add(calibration.opts, 'lowNote', 0, 127, 1).name('Lowest key (MIDI)').onChange(applyRange);
 	fCal.add(calibration.opts, 'highNote', 0, 127, 1).name('Highest key (MIDI)').onChange(applyRange);
-	fCal
-		.add(calibration.opts, 'flameSide')
-		.name('Flip flame side')
-		.onChange(() => {
-			calibration.render();
-			calibration.save();
-		});
-	fCal
-		.add(calibration.opts, 'blackKeyDepth', -1, 1, 0.05)
-		.name('Black-key setback')
-		.onChange(() => calibration.save());
-	fCal
-		.add(calibration.opts, 'showGuides')
-		.name('Show calibration guides')
-		.onChange((v) => calibration.setGuidesVisible(v));
+	fCal.add(calibration.opts, 'blackKeyDepth', -1, 1, 0.05).name('Black-key setback').onChange(() => calibration.save());
+	fCal.add(calibration.opts, 'showGuides').name('Show calibration guides').onChange((v) => calibration.setGuidesVisible(v));
 	fCal.add({ reset: () => calibration.resetHandles() }, 'reset').name('Reset C markers');
-
-	// presets for common keyboards
 	const presets = {
 		'88 keys (A0–C8)': [21, 108],
 		'76 keys (E1–G7)': [28, 103],
@@ -176,9 +192,8 @@ function buildGUI(midi) {
 		'49 keys (C2–C6)': [36, 84],
 		'25 keys (C3–C5)': [48, 72],
 	};
-	const presetProxy = { size: '88 keys (A0–C8)' };
 	fCal
-		.add(presetProxy, 'size', Object.keys(presets))
+		.add({ size: '88 keys (A0–C8)' }, 'size', Object.keys(presets))
 		.name('Keyboard preset')
 		.onChange((k) => {
 			const [lo, hi] = presets[k];
@@ -186,31 +201,60 @@ function buildGUI(midi) {
 			fCal.controllersRecursive().forEach((c) => c.updateDisplay());
 		});
 
-	// ---- Flame look ----
-	const p = flames.params;
-	const fFlame = gui.addFolder('Flame');
-	fFlame.add(p, 'emitRate', 10, 300, 1).name('Emission rate');
-	fFlame.add(p, 'speed', 40, 600, 1).name('Launch speed');
-	fFlame.add(p, 'spread', 0, 200, 1).name('Spread');
-	fFlame.add(p, 'buoyancy', 0, 500, 1).name('Buoyancy');
-	fFlame.add(p, 'turbulence', 0, 400, 1).name('Turbulence');
-	fFlame.add(p, 'lifetime', 0.2, 2.5, 0.05).name('Lifetime (s)');
-	fFlame.add(p, 'sizeBase', 8, 120, 1).name('Flame size').onChange(() => flames.syncUniforms());
-	fFlame.add(p, 'brightness', 0.2, 3, 0.05).name('Brightness').onChange(() => flames.syncUniforms());
-	fFlame.add(p, 'warmth', 0.3, 2, 0.05).name('Warmth').onChange(() => flames.syncUniforms());
+	// ---- Effect (glass bars) ----
+	const p = bars.params;
+	const sync = () => bars.syncUniforms();
+	const fx = gui.addFolder('Effect — glass bars');
+	fx.addColor(p, 'color').name('Glow colour').onChange(sync);
+	fx.addColor(p, 'tint').name('Glass tint').onChange(sync);
+	fx.add(p, 'glow', 0, 2, 0.01).name('Glow intensity').onChange(sync);
+	fx.add(p, 'glowFloor', 0, 1, 0.01).name('Pulse floor').onChange(sync);
+	fx.add(p, 'pulseSpeed', 0, 12, 0.1).name('Pulse speed').onChange(sync);
+	fx.add(p, 'pulseWave', 0, 6, 0.1).name('Pulse wave').onChange(sync);
+	fx.add(p, 'refraction', 0, 0.3, 0.005).name('Refraction').onChange(sync);
+	fx.add(p, 'fresnel', 0, 3, 0.05).name('Glass glint').onChange(sync);
+	fx.add(p, 'fresnelPow', 0.5, 6, 0.1).name('Glint sharpness').onChange(sync);
+	fx.add(p, 'extendSpeed', 0.2, 14, 0.1).name('Grow / travel speed');
+	fx.add(p, 'infiniteLength').name('Infinite length');
+	fx.add(p, 'maxLength', 0.5, 30, 0.1).name('Max length (if finite)');
+
+	// ---- Shape & placement ----
+	const fShape = fx.addFolder('Shape & placement');
+	fShape.add(p, 'width', 0.01, 1.2, 0.01).name('Width (thinner ↓)');
+	fShape.add(p, 'depth', 0.01, 1.2, 0.01).name('Depth (less deep ↓)');
+	fShape.add(p, 'roll', -180, 180, 1).name('Roll / facing (°)');
+	fShape.add(p, 'nudgeX', -3, 3, 0.02).name('Nudge X');
+	fShape.add(p, 'nudgeY', -3, 3, 0.02).name('Nudge Y');
+	fShape.add(p, 'nudgeZ', -3, 3, 0.02).name('Nudge Z');
+
+	// ---- Direction (extend anywhere in 3D) ----
+	const fDir = fx.addFolder('Direction');
+	fDir.add(p, 'dirX', -1, 1, 0.01).name('X (left/right)');
+	fDir.add(p, 'dirY', -1, 1, 0.01).name('Y (down/up)');
+	fDir.add(p, 'dirZ', -1, 1, 0.01).name('Z (away/toward you)');
+
+	// ---- Electrified outline ----
+	const fArc = fx.addFolder('Electrified outline');
+	fArc.addColor(p, 'arcColor').name('Outline colour').onChange(sync);
+	fArc.add(p, 'arc', 0, 3, 0.05).name('Intensity').onChange(sync);
+	fArc.add(p, 'arcSpeed', 0, 4, 0.05).name('Flow speed').onChange(sync);
+	fArc.add(p, 'arcFreq', 0.5, 14, 0.1).name('Flow detail').onChange(sync);
+	fArc.add(p, 'edgeSharp', 0.5, 8, 0.1).name('Outline tightness').onChange(sync);
 
 	// ---- Actions ----
-	gui.add({ test: testBurst }, 'test').name('🎆 Test flame (random)');
-	gui.add({ panic: () => { emitters.clear(); flames.clear(); } }, 'panic').name('Clear all flames');
+	gui.add({ test: testBurst }, 'test').name('💎 Test bars (random)');
+	gui.add({ clear: () => bars.clear() }, 'clear').name('Clear all bars');
 }
 
-// fire a handful of timed bursts across the keyboard to preview the look
 function testBurst() {
 	const { lowNote, highNote } = calibration.opts;
-	const until = clock.elapsedTime + 0.3;
-	for (let k = 0; k < 4; k++) {
+	for (let k = 0; k < 3; k++) {
 		const note = Math.round(lowNote + Math.random() * (highNote - lowNote));
-		emitters.set(note, { velocity: 0.6 + Math.random() * 0.4, until });
+		const s = calibration.noteScreen(note);
+		const base = screenToWorld(s.x, s.y);
+		if (!base) continue;
+		bars.spawn(note, base, 0.7 + Math.random() * 0.3);
+		setTimeout(() => bars.release(note), 350 + Math.random() * 500);
 	}
 }
 
@@ -218,37 +262,17 @@ function testBurst() {
 function onResize() {
 	const w = window.innerWidth;
 	const h = window.innerHeight;
-	camera.left = -w / 2;
-	camera.right = w / 2;
-	camera.top = h / 2;
-	camera.bottom = -h / 2;
+	camera.aspect = w / h;
 	camera.updateProjectionMatrix();
 	renderer.setSize(w, h);
 	calibration.resize();
+	updateCover();
 }
 
 function animate() {
-	const dt = Math.min(clock.getDelta(), 0.05); // clamp big tab-switch gaps
-	const time = clock.elapsedTime;
-
-	// flame launch/wobble directions follow the live keyboard line
-	flames.flameDir = calibration.flameDir;
-	flames.lineDir = calibration.lineDir;
-
-	// emit from every held note
-	for (const [note, e] of emitters) {
-		if (e.until !== undefined && time > e.until) {
-			emitters.delete(note);
-			continue;
-		}
-		const pos = calibration.notePosition(note);
-		e.accum = (e.accum || 0) + flames.params.emitRate * (0.35 + e.velocity) * dt;
-		let n = Math.floor(e.accum);
-		e.accum -= n;
-		while (n-- > 0) flames.spawn(pos.x, pos.y, e.velocity);
-	}
-
-	flames.update(dt, time);
+	const dt = Math.min(clock.getDelta(), 0.05);
+	if (videoEl.readyState >= videoEl.HAVE_CURRENT_DATA) videoTex.needsUpdate = true;
+	bars.update(dt, camera);
 	renderer.render(scene, camera);
 }
 

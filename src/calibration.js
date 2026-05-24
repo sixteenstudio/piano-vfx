@@ -5,18 +5,19 @@
  * (C is the white key immediately left of each pair of black keys). Notes
  * between two C markers are interpolated *per octave segment* using real piano
  * geometry, so the mapping follows the keyboard even when perspective /
- * foreshortening compresses the far end — a single straight line can't do that.
+ * foreshortening compresses the far end.
  *
- * Because every C is placed by hand, mirror / back-to-front / angle are all
- * handled implicitly by where the markers land. The only remaining choice is
- * which side the flames shoot (perpendicular to the keyboard) — `flameSide`.
+ * Output is `noteScreen(note)` in CSS/client pixels (origin top-left). main.js
+ * unprojects that onto the z=0 plane to get the 3D point a note's effect spawns
+ * from.
  *
- * Coordinate spaces:
- *   - markers are stored in CSS/client pixels (y-down, origin top-left),
- *   - world space is pixels with origin at screen centre and y-up, matching the
- *     orthographic camera in main.js.
+ * Marker positions + the keyboard range are stored *per MIDI device name*, so
+ * switching instruments restores that instrument's calibration instead of
+ * forcing a re-calibrate. (Global look prefs like guide visibility live under a
+ * shared key.)
  */
-const STORE_KEY = 'piano-vfx-calibration-v2';
+const STORE_KEY = 'piano-vfx-calibration-v3';
+const DEFAULT_DEVICE = '__default__';
 
 export class Calibration {
 	constructor(onChange) {
@@ -27,44 +28,61 @@ export class Calibration {
 		this.opts = {
 			lowNote: 21, // A0  (88-key piano = 21..108)
 			highNote: 108, // C8
-			flameSide: false,
 			showGuides: true,
 			blackKeyDepth: 0.35, // how far black keys sit "back" (in white-key widths)
 		};
 
-		// marker positions in client px, keyed by MIDI note. Persisted per note so
-		// they survive reloads and keyboard-range changes.
-		this.markers = {};
+		this.markers = {}; // note -> {x,y} client px (for the current device)
+		this.deviceKey = DEFAULT_DEVICE;
 
 		this._load();
 
 		this.container = document.getElementById('calibration');
-		this.svg = document.getElementById('cal-svg');
 		this.poly = document.getElementById('cal-poly');
-		this.flameSeg = document.getElementById('cal-flame-dir');
 		this.handleEls = {}; // note -> element
 
-		this.setRange(this.opts.lowNote, this.opts.highNote, false);
+		this.setDevice(DEFAULT_DEVICE);
 	}
 
 	_load() {
 		try {
-			const s = JSON.parse(localStorage.getItem(STORE_KEY));
-			if (s) {
-				Object.assign(this.opts, s.opts || {});
-				if (s.markers) this.markers = s.markers;
-			}
+			this.store = JSON.parse(localStorage.getItem(STORE_KEY)) || {};
 		} catch {
-			/* ignore corrupt storage */
+			this.store = {};
 		}
+		if (!this.store.devices) this.store.devices = {};
+		if (this.store.global) Object.assign(this.opts, this.store.global);
 	}
 
 	_save() {
+		this.store.devices[this.deviceKey] = {
+			markers: this.markers,
+			lowNote: this.opts.lowNote,
+			highNote: this.opts.highNote,
+		};
+		this.store.global = {
+			showGuides: this.opts.showGuides,
+			blackKeyDepth: this.opts.blackKeyDepth,
+		};
 		try {
-			localStorage.setItem(STORE_KEY, JSON.stringify({ markers: this.markers, opts: this.opts }));
+			localStorage.setItem(STORE_KEY, JSON.stringify(this.store));
 		} catch {
 			/* ignore */
 		}
+	}
+
+	/** Switch to a device's saved calibration (markers + range), or defaults. */
+	setDevice(name) {
+		this.deviceKey = name || DEFAULT_DEVICE;
+		const d = this.store.devices[this.deviceKey];
+		if (d) {
+			this.markers = d.markers || {};
+			if (d.lowNote != null) this.opts.lowNote = d.lowNote;
+			if (d.highNote != null) this.opts.highNote = d.highNote;
+		} else {
+			this.markers = {};
+		}
+		this.setRange(this.opts.lowNote, this.opts.highNote);
 	}
 
 	/** Recompute which notes get a marker and (re)build the DOM handles. */
@@ -84,7 +102,6 @@ export class Calibration {
 		if (save) this._save();
 	}
 
-	/** assign sensible default positions for any anchor note missing one */
 	_ensureMarkers() {
 		const notes = this.anchorNotes;
 		const wFirst = whitePos(notes[0]);
@@ -148,65 +165,46 @@ export class Calibration {
 		this.render();
 	}
 
-	/** client px -> world (centre origin, y-up) */
-	toWorld(pt) {
-		return { x: pt.x - this.w / 2, y: this.h / 2 - pt.y };
-	}
-
 	get anchorsSorted() {
 		return this.anchorNotes
 			.map((n) => ({ note: n, x: this.markers[n].x, y: this.markers[n].y }))
 			.sort((a, b) => a.note - b.note);
 	}
 
-	/** overall unit vector along the keyboard (first -> last marker), world space */
-	get lineDir() {
-		const A = this.anchorsSorted;
-		const a = this.toWorld(A[0]);
-		const b = this.toWorld(A[A.length - 1]);
-		const x = b.x - a.x;
-		const y = b.y - a.y;
-		const len = Math.hypot(x, y) || 1;
-		return { x: x / len, y: y / len };
-	}
-
-	/** unit vector perpendicular to the keyboard — where flames shoot, world space */
-	get flameDir() {
-		const d = this.lineDir;
-		let n = { x: -d.y, y: d.x };
-		if (n.y < 0) n = { x: -n.x, y: -n.y }; // default: point up the screen
-		if (this.opts.flameSide) n = { x: -n.x, y: -n.y };
-		return n;
-	}
-
 	/**
-	 * world position for a MIDI note, interpolated within the bracketing C->C
-	 * segment (extrapolated beyond the first/last marker). Black keys are nudged
-	 * "back" along the flame direction since they sit further from the player.
+	 * client-pixel position for a MIDI note, interpolated within the bracketing
+	 * C->C segment (extrapolated past the first/last marker). Black keys are
+	 * nudged "back" (perpendicular to the local segment) since they sit further
+	 * from the player.
 	 */
-	notePosition(note) {
+	noteScreen(note) {
 		const A = this.anchorsSorted;
-		// pick the segment [A[i], A[i+1]] that brackets the note (clamp to ends)
 		let i = 0;
 		while (i < A.length - 2 && note >= A[i + 1].note) i++;
 		const a = A[i];
 		const b = A[i + 1];
 		const wa = whitePos(a.note);
 		const wb = whitePos(b.note);
-		const t = (whitePos(note) - wa) / (wb - wa || 1); // may be <0 or >1 → extrapolate
+		const denom = wb - wa || 1;
+		const t = (whitePos(note) - wa) / denom;
 
-		const pa = this.toWorld(a);
-		const pb = this.toWorld(b);
-		let x = pa.x + (pb.x - pa.x) * t;
-		let y = pa.y + (pb.y - pa.y) * t;
+		let x = a.x + (b.x - a.x) * t;
+		let y = a.y + (b.y - a.y) * t;
 
 		if (isBlackKey(note) && this.opts.blackKeyDepth) {
-			const len = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-			const whiteWidthPx = len / (wb - wa || 1);
-			const f = this.flameDir;
-			const d = this.opts.blackKeyDepth * whiteWidthPx;
-			x += f.x * d;
-			y += f.y * d;
+			const sdx = b.x - a.x;
+			const sdy = b.y - a.y;
+			const len = Math.hypot(sdx, sdy) || 1;
+			let px = -sdy / len;
+			let py = sdx / len; // perpendicular to the segment
+			if (py > 0) {
+				px = -px;
+				py = -py;
+			} // point "up" the screen (toward the back of the keyboard)
+			const whiteWidthPx = len / denom;
+			const off = this.opts.blackKeyDepth * whiteWidthPx;
+			x += px * off;
+			y += py * off;
 		}
 		return { x, y };
 	}
@@ -225,7 +223,7 @@ export class Calibration {
 		this._save();
 	}
 
-	/** redraw the DOM handles + the SVG guide polyline & flame-direction tick */
+	/** redraw the DOM handles + the SVG guide polyline */
 	render() {
 		const A = this.anchorsSorted;
 		for (const { note, x, y } of A) {
@@ -235,15 +233,6 @@ export class Calibration {
 			el.style.top = `${y}px`;
 		}
 		this.poly.setAttribute('points', A.map((p) => `${p.x},${p.y}`).join(' '));
-
-		// flame-direction tick from the middle of the keyboard line
-		const mid = A[Math.floor(A.length / 2)];
-		const f = this.flameDir; // world, y-up
-		const L = 46;
-		this.flameSeg.setAttribute('x1', mid.x);
-		this.flameSeg.setAttribute('y1', mid.y);
-		this.flameSeg.setAttribute('x2', mid.x + f.x * L);
-		this.flameSeg.setAttribute('y2', mid.y - f.y * L); // y-up world -> y-down screen
 	}
 
 	save() {

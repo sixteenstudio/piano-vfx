@@ -7,18 +7,20 @@
  *
  * Sustain pedal (CC64) is honoured the way a real piano feels: note-offs that
  * arrive while the pedal is down are deferred until the pedal lifts, so held
- * flames keep burning.
+ * effects keep going. Toggle that off with `sustainHolds = false`.
  */
 export class MidiInput {
-	constructor({ onNoteOn, onNoteOff, onDevices, onStatus }) {
+	constructor({ onNoteOn, onNoteOff, onDevices, onStatus, onSelect }) {
 		this.onNoteOn = onNoteOn;
 		this.onNoteOff = onNoteOff;
 		this.onDevices = onDevices || (() => {});
 		this.onStatus = onStatus || (() => {});
+		this.onSelect = onSelect || (() => {}); // (deviceName) => void
 
 		this.access = null;
 		this.current = null; // bound MIDIInput
 		this.sustain = false;
+		this.sustainHolds = true; // when false, sustain pedal never holds notes
 		this.sustained = new Set(); // notes whose release is pending the pedal
 	}
 
@@ -56,6 +58,7 @@ export class MidiInput {
 		if (inputs.length > 0) this.select(inputs[0].id);
 		else {
 			this.current = null;
+			this.onSelect('__default__');
 			this.onStatus('No MIDI device detected — plug one in, or use the computer keys.');
 		}
 	}
@@ -67,6 +70,7 @@ export class MidiInput {
 		if (input) {
 			input.onmidimessage = (e) => this._handle(e.data);
 			this.onStatus(`MIDI: ${input.name || input.id} connected.`);
+			this.onSelect(input.name || input.id); // device name → load its calibration
 		}
 	}
 
@@ -81,7 +85,7 @@ export class MidiInput {
 			this.onNoteOn(d1, d2 / 127);
 		} else if (status === 0x80 || (status === 0x90 && d2 === 0)) {
 			// note off
-			if (this.sustain) this.sustained.add(d1);
+			if (this.sustain && this.sustainHolds) this.sustained.add(d1);
 			else this.onNoteOff(d1);
 		} else if (status === 0xb0 && d1 === 64) {
 			// sustain pedal

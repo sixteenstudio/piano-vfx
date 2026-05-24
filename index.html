@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Piano Flame VFX — Three.js WebGPU</title>
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+		<link rel="stylesheet" href="/src/styles.css" />
+	</head>
+	<body>
+		<!-- Live webcam, composited behind the (screen-blended) WebGPU canvas -->
+		<video id="webcam" autoplay playsinline muted></video>
+
+		<!-- Calibration overlay: two draggable handles + the key line between them -->
+		<div id="calibration">
+			<svg id="cal-line">
+				<line id="cal-line-seg" x1="0" y1="0" x2="0" y2="0" />
+				<line id="cal-flame-dir" x1="0" y1="0" x2="0" y2="0" />
+			</svg>
+			<div class="handle" id="handle-0"><span>LOW</span></div>
+			<div class="handle" id="handle-1"><span>HIGH</span></div>
+		</div>
+
+		<!-- Three.js-example style info / instructions -->
+		<div id="info">
+			<strong>Three.js WebGPU</strong> — Piano Flame VFX<br />
+			Live flames erupt from each piano key you play, driven by Web MIDI over your webcam.<br />
+			<span class="hint">
+				Drag the <b>LOW</b> / <b>HIGH</b> handles onto the lowest &amp; highest keys ·
+				pick your MIDI device &amp; camera flips in the panel ·
+				no piano handy? play your computer keys
+				<kbd>A</kbd><kbd>W</kbd><kbd>S</kbd><kbd>E</kbd><kbd>D</kbd>…
+			</span>
+			<div id="status"></div>
+		</div>
+
+		<!-- Fullscreen overlay shown if WebGPU/WebGL cannot start at all -->
+		<div id="fatal" hidden></div>
+
+		<script type="module" src="/src/main.js"></script>
+	</body>
+</html>

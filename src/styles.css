@@ -1,0 +1,182 @@
+:root {
+	color-scheme: dark;
+	--accent: #ff7a18;
+	--accent-2: #ffd24a;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	margin: 0;
+	height: 100%;
+	overflow: hidden;
+	background: #000;
+	font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+	color: #fff;
+	touch-action: none;
+}
+
+/* Webcam sits at the very back. The WebGPU canvas is screen-blended on top of it. */
+#webcam {
+	position: fixed;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	background: #050505;
+	z-index: 0;
+	/* mirror/flip are toggled at runtime via these CSS custom props */
+	transform: scaleX(var(--flip-x, 1)) scaleY(var(--flip-y, 1));
+}
+
+/* renderer canvas — added by JS. Additive flame light "screens" onto the video. */
+canvas {
+	position: fixed;
+	inset: 0;
+	width: 100% !important;
+	height: 100% !important;
+	z-index: 1;
+	mix-blend-mode: screen;
+	pointer-events: none;
+}
+
+/* ---- calibration overlay ---- */
+#calibration {
+	position: fixed;
+	inset: 0;
+	z-index: 3;
+	pointer-events: none; /* container ignores clicks; handles re-enable */
+}
+#calibration.hidden {
+	display: none;
+}
+
+#cal-line {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+}
+#cal-line-seg {
+	stroke: var(--accent-2);
+	stroke-width: 2;
+	stroke-dasharray: 9 7;
+	opacity: 0.85;
+	filter: drop-shadow(0 0 6px rgba(255, 210, 74, 0.6));
+}
+#cal-flame-dir {
+	stroke: var(--accent);
+	stroke-width: 2;
+	stroke-dasharray: 3 6;
+	opacity: 0.7;
+}
+
+.handle {
+	position: absolute;
+	left: 0;
+	top: 0;
+	width: 30px;
+	height: 30px;
+	margin: -15px 0 0 -15px;
+	border-radius: 50%;
+	border: 2px solid #fff;
+	background: rgba(255, 122, 24, 0.35);
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 14px rgba(255, 122, 24, 0.8);
+	pointer-events: auto;
+	cursor: grab;
+	touch-action: none;
+	display: grid;
+	place-items: center;
+}
+.handle:active {
+	cursor: grabbing;
+}
+.handle span {
+	position: absolute;
+	top: 34px;
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	font-weight: 700;
+	text-shadow: 0 1px 3px #000, 0 0 6px #000;
+	white-space: nowrap;
+	pointer-events: none;
+}
+#handle-0 {
+	background: rgba(80, 160, 255, 0.35);
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 14px rgba(80, 160, 255, 0.85);
+}
+
+/* ---- three.js-style info banner ---- */
+#info {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	z-index: 5;
+	padding: 12px 10px 14px;
+	text-align: center;
+	font-size: 13px;
+	line-height: 1.55;
+	color: #f2f2f2;
+	pointer-events: none;
+	background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+	text-shadow: 0 1px 4px #000;
+}
+#info strong {
+	color: var(--accent-2);
+}
+#info .hint {
+	display: inline-block;
+	margin-top: 4px;
+	font-size: 11px;
+	opacity: 0.82;
+}
+#info b {
+	color: var(--accent);
+}
+#info kbd {
+	display: inline-block;
+	padding: 0 4px;
+	margin: 0 1px;
+	border: 1px solid #666;
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: #1a1a1a;
+	font-size: 10px;
+}
+#status {
+	margin-top: 6px;
+	font-size: 11px;
+	color: var(--accent);
+	min-height: 14px;
+}
+
+/* keep lil-gui clear of the info banner */
+.lil-gui.root {
+	z-index: 20;
+	--width: 300px;
+}
+
+/* ---- fatal error overlay ---- */
+#fatal {
+	position: fixed;
+	inset: 0;
+	z-index: 99;
+	display: grid;
+	place-items: center;
+	padding: 8vw;
+	text-align: center;
+	background: #0a0a0a;
+	font-size: 15px;
+	line-height: 1.6;
+}
+#fatal[hidden] {
+	display: none;
+}
+#fatal a {
+	color: var(--accent-2);
+}

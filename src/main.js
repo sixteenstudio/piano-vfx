@@ -63,14 +63,8 @@ async function init() {
 	flames = new FlameSystem();
 	scene.add(flames.mesh);
 
-	calibration = new Calibration(() => {
-		// keep the flame vectors in sync while handles are dragged
-		flames.flameDir = calibration.flameDir;
-		flames.lineDir = calibration.lineDir;
-	});
+	calibration = new Calibration();
 	calibration.setGuidesVisible(calibration.opts.showGuides);
-	flames.flameDir = calibration.flameDir;
-	flames.lineDir = calibration.lineDir;
 
 	// ---- input ----
 	const onNoteOn = (note, velocity) => emitters.set(note, { velocity });
@@ -153,25 +147,26 @@ function buildGUI(midi) {
 
 	// ---- Calibration ----
 	const fCal = gui.addFolder('Calibration');
-	fCal.add(calibration.opts, 'lowNote', 0, 127, 1).name('Lowest key (MIDI)');
-	fCal.add(calibration.opts, 'highNote', 0, 127, 1).name('Highest key (MIDI)');
-	fCal
-		.add(calibration.opts, 'reverseKeys')
-		.name('Reverse key order')
-		.onChange(() => calibration.save());
+	const applyRange = () =>
+		calibration.setRange(calibration.opts.lowNote, calibration.opts.highNote);
+	fCal.add(calibration.opts, 'lowNote', 0, 127, 1).name('Lowest key (MIDI)').onChange(applyRange);
+	fCal.add(calibration.opts, 'highNote', 0, 127, 1).name('Highest key (MIDI)').onChange(applyRange);
 	fCal
 		.add(calibration.opts, 'flameSide')
 		.name('Flip flame side')
 		.onChange(() => {
-			flames.flameDir = calibration.flameDir;
 			calibration.render();
 			calibration.save();
 		});
 	fCal
+		.add(calibration.opts, 'blackKeyDepth', -1, 1, 0.05)
+		.name('Black-key setback')
+		.onChange(() => calibration.save());
+	fCal
 		.add(calibration.opts, 'showGuides')
 		.name('Show calibration guides')
 		.onChange((v) => calibration.setGuidesVisible(v));
-	fCal.add({ reset: () => calibration.resetHandles() }, 'reset').name('Reset handles');
+	fCal.add({ reset: () => calibration.resetHandles() }, 'reset').name('Reset C markers');
 
 	// presets for common keyboards
 	const presets = {
@@ -186,8 +181,8 @@ function buildGUI(midi) {
 		.add(presetProxy, 'size', Object.keys(presets))
 		.name('Keyboard preset')
 		.onChange((k) => {
-			[calibration.opts.lowNote, calibration.opts.highNote] = presets[k];
-			calibration.save();
+			const [lo, hi] = presets[k];
+			calibration.setRange(lo, hi);
 			fCal.controllersRecursive().forEach((c) => c.updateDisplay());
 		});
 
@@ -230,13 +225,15 @@ function onResize() {
 	camera.updateProjectionMatrix();
 	renderer.setSize(w, h);
 	calibration.resize();
-	flames.flameDir = calibration.flameDir;
-	flames.lineDir = calibration.lineDir;
 }
 
 function animate() {
 	const dt = Math.min(clock.getDelta(), 0.05); // clamp big tab-switch gaps
 	const time = clock.elapsedTime;
+
+	// flame launch/wobble directions follow the live keyboard line
+	flames.flameDir = calibration.flameDir;
+	flames.lineDir = calibration.lineDir;
 
 	// emit from every held note
 	for (const [note, e] of emitters) {

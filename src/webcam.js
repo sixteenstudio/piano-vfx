@@ -14,11 +14,17 @@ export class Webcam {
 
 	async start(deviceId) {
 		this.stop();
+		// Request the camera's native/maximum resolution so the feed stays sharp
+		// instead of being upscaled to fill the screen. The browser clamps these
+		// "ideal" values down to whatever the device actually supports.
+		const res = {
+			width: { ideal: 3840 },
+			height: { ideal: 2160 },
+			frameRate: { ideal: 60 },
+		};
 		const constraints = {
 			audio: false,
-			video: deviceId
-				? { deviceId: { exact: deviceId } }
-				: { width: { ideal: 1280 }, height: { ideal: 720 } },
+			video: deviceId ? { deviceId: { exact: deviceId }, ...res } : res,
 		};
 		this.stream = await navigator.mediaDevices.getUserMedia(constraints);
 		this.video.srcObject = this.stream;

@@ -54,14 +54,15 @@ canvas {
 	display: none;
 }
 
-#cal-line {
+#cal-svg {
 	position: absolute;
 	inset: 0;
 	width: 100%;
 	height: 100%;
 	overflow: visible;
 }
-#cal-line-seg {
+#cal-poly {
+	fill: none;
 	stroke: var(--accent-2);
 	stroke-width: 2;
 	stroke-dasharray: 9 7;
@@ -79,13 +80,13 @@ canvas {
 	position: absolute;
 	left: 0;
 	top: 0;
-	width: 30px;
-	height: 30px;
-	margin: -15px 0 0 -15px;
+	width: 24px;
+	height: 24px;
+	margin: -12px 0 0 -12px;
 	border-radius: 50%;
 	border: 2px solid #fff;
 	background: rgba(255, 122, 24, 0.35);
-	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 14px rgba(255, 122, 24, 0.8);
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 12px rgba(255, 122, 24, 0.8);
 	pointer-events: auto;
 	cursor: grab;
 	touch-action: none;
@@ -97,17 +98,22 @@ canvas {
 }
 .handle span {
 	position: absolute;
-	top: 34px;
+	top: 26px;
 	font-size: 10px;
-	letter-spacing: 0.12em;
+	letter-spacing: 0.06em;
 	font-weight: 700;
+	color: var(--accent-2);
 	text-shadow: 0 1px 3px #000, 0 0 6px #000;
 	white-space: nowrap;
 	pointer-events: none;
 }
-#handle-0 {
-	background: rgba(80, 160, 255, 0.35);
-	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 14px rgba(80, 160, 255, 0.85);
+/* middle C gets a distinct colour as a reference point */
+.handle.mid {
+	background: rgba(80, 160, 255, 0.4);
+	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 0 14px rgba(80, 160, 255, 0.9);
+}
+.handle.mid span {
+	color: #8fc0ff;
 }
 
 /* ---- three.js-style info banner ---- */
@@ -123,8 +129,8 @@ canvas {
 	line-height: 1.55;
 	color: #f2f2f2;
 	pointer-events: none;
-	background: linear-gradient(180deg, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
-	text-shadow: 0 1px 4px #000;
+	/* no background fill — keep the webcam fully visible; legibility via shadow */
+	text-shadow: 0 1px 3px #000, 0 0 8px rgba(0, 0, 0, 0.9);
 }
 #info strong {
 	color: var(--accent-2);

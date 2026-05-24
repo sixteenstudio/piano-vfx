@@ -25,24 +25,27 @@ Grant **camera** access when prompted.
 
 ## Using it
 
-1. **Calibrate** — drag the blue **LOW** handle onto your lowest key and the
-   orange **HIGH** handle onto your highest key. The dashed orange tick shows
-   which way the flames will shoot.
+1. **Calibrate** — set your **Keyboard preset** (or low/high notes), then drag
+   each **C** marker onto the centre of that C key. C is the white key
+   immediately left of every pair of black keys; middle C (C4) is the blue one.
+   Notes between two Cs are interpolated per octave, so the mapping follows the
+   keyboard even under perspective/foreshortening.
 2. **Pick your MIDI device** in the panel (auto-selected if only one).
 3. **Play.** Flames erupt from each key; harder hits burn brighter. The sustain
    pedal keeps them lit.
 
 ### Any camera angle
 
-Flames shoot *perpendicular* to the calibration line, so it already works at any
-rotation. Two toggles cover the rest:
+Because every C is placed by hand, mirror / back-to-front / angled setups are all
+handled by *where you drop the markers*. The remaining controls:
 
-- **Mirror (left/right)** / **Flip (up/down)** — match how your webcam sees you.
-- **Reverse key order** — if the piano faces away from the camera (bass on the
-  right).
+- **Mirror (left/right)** / **Flip (up/down)** — match how your webcam sees you
+  (these flip the video image only).
 - **Flip flame side** — shoot the flames out the other edge of the keyboard.
+- **Black-key setback** — how far black keys sit "back" from the white-key line.
 
-Calibration + flame settings are saved to `localStorage`, so they survive a reload.
+Marker positions + flame settings are saved to `localStorage`, so they survive a
+reload (and per-note, so changing keyboard size keeps the Cs you already placed).
 
 ### No piano yet?
 

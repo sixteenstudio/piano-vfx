@@ -10,14 +10,13 @@
 		<!-- Live webcam, composited behind the (screen-blended) WebGPU canvas -->
 		<video id="webcam" autoplay playsinline muted></video>
 
-		<!-- Calibration overlay: two draggable handles + the key line between them -->
+		<!-- Calibration overlay: one draggable marker per C key + the key line.
+		     Markers are injected by calibration.js. -->
 		<div id="calibration">
-			<svg id="cal-line">
-				<line id="cal-line-seg" x1="0" y1="0" x2="0" y2="0" />
+			<svg id="cal-svg">
+				<polyline id="cal-poly" points="" />
 				<line id="cal-flame-dir" x1="0" y1="0" x2="0" y2="0" />
 			</svg>
-			<div class="handle" id="handle-0"><span>LOW</span></div>
-			<div class="handle" id="handle-1"><span>HIGH</span></div>
 		</div>
 
 		<!-- Three.js-example style info / instructions -->
@@ -25,10 +24,10 @@
 			<strong>Three.js WebGPU</strong> — Piano Flame VFX<br />
 			Live flames erupt from each piano key you play, driven by Web MIDI over your webcam.<br />
 			<span class="hint">
-				Drag the <b>LOW</b> / <b>HIGH</b> handles onto the lowest &amp; highest keys ·
-				pick your MIDI device &amp; camera flips in the panel ·
-				no piano handy? play your computer keys
-				<kbd>A</kbd><kbd>W</kbd><kbd>S</kbd><kbd>E</kbd><kbd>D</kbd>…
+				Drag each <b>C</b> marker onto the centre of that C key (the white key left of each
+				2-black-key group) — the rest interpolate ·
+				set your MIDI device, camera flips &amp; keyboard size in the panel ·
+				no piano handy? play <kbd>A</kbd><kbd>W</kbd><kbd>S</kbd><kbd>E</kbd><kbd>D</kbd>…
 			</span>
 			<div id="status"></div>
 		</div>
